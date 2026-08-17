@@ -74,7 +74,7 @@ func (r *Repository) FindTask(id string) (*model.PickTask, error) {
 	t, err := r.store.GetTask(id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("task %s: %w", id, ErrNotFound)
+			return nil, fmt.Errorf("task %s: %v", id, ErrNotFound)
 		}
 		return nil, fmt.Errorf("task %s: %w", id, err)
 	}
@@ -89,7 +89,7 @@ func (r *Repository) UpdateTask(id string, fn func(*model.PickTask)) (*model.Pic
 	t, err := r.store.UpdateTask(id, fn)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("task %s: %w", id, ErrNotFound)
+			return nil, fmt.Errorf("task %s: %v", id, ErrNotFound)
 		}
 		return nil, fmt.Errorf("task %s: %w", id, err)
 	}

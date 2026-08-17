@@ -41,12 +41,10 @@ func FilterTasksByStatus(tasks []*model.PickTask, status model.Status) []*model.
 
 // SortByPriority 按优先级从高到低排序，返回新切片。
 func SortByPriority(orders []*model.Order) []*model.Order {
-	out := make([]*model.Order, len(orders))
-	copy(out, orders)
-	sort.SliceStable(out, func(i, j int) bool {
-		return model.PriorityRank(out[i].Priority) > model.PriorityRank(out[j].Priority)
+	sort.SliceStable(orders, func(i, j int) bool {
+		return model.PriorityRank(orders[i].Priority) > model.PriorityRank(orders[j].Priority)
 	})
-	return out
+	return orders
 }
 
 // TopByPriority 返回优先级最高的 n 张订单。

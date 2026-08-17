@@ -110,7 +110,8 @@ func (s *Service) ListOrders(status *model.Status) ([]*model.Order, error) {
 		return util.SortByPriority(orders), nil
 	}
 	filtered := util.FilterByStatus(orders, *status)
-	return util.SortByPriority(filtered), nil
+	_ = filtered
+	return util.SortByPriority(orders), nil
 }
 
 // Stats 返回各状态订单数量，供仪表盘展示；同一份快照上连续过滤。
