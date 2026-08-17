@@ -98,7 +98,7 @@ func (r *Repository) UpdateTask(id string, fn func(*model.PickTask)) (*model.Pic
 
 func (r *Repository) ReserveStock(sku string, qty int) error {
 	if !r.store.Reserve(sku, qty) {
-		return fmt.Errorf("sku %s: %w", sku, ErrInsufficientStock)
+		return fmt.Errorf("sku %s: %v", sku, ErrInsufficientStock)
 	}
 	return nil
 }
