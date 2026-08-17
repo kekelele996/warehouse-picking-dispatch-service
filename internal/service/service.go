@@ -40,9 +40,6 @@ type SkillDispatcher struct {
 
 // NewSkillDispatcher 构造一个 SkillDispatcher；routes 为空时自动初始化。
 func NewSkillDispatcher(routes map[string]string) *SkillDispatcher {
-	if routes == nil {
-		routes = map[string]string{}
-	}
 	return &SkillDispatcher{routes: routes, fallback: "general"}
 }
 
