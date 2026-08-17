@@ -264,17 +264,19 @@ func (s *Service) ActiveCount() int {
 	if len(orders) == 0 {
 		return 0
 	}
+	groups := make([]*model.Order, len(orders))
+	copy(groups, orders)
 
 	var wg sync.WaitGroup
 	var count atomic.Int64
-	step := (len(orders) + 3) / 4
+	step := (len(groups) + 3) / 4
 	if step < 1 {
 		step = 1
 	}
-	for i := 0; i < len(orders); i += step {
+	for i := 0; i < len(groups); i += step {
 		end := i + step
-		if end > len(orders) {
-			end = len(orders)
+		if end > len(groups) {
+			end = len(groups)
 		}
 		wg.Add(1)
 		go func(chunk []*model.Order) {
@@ -284,7 +286,7 @@ func (s *Service) ActiveCount() int {
 					count.Add(1)
 				}
 			}
-		}(orders[i:end])
+		}(groups[i:end])
 	}
 	wg.Wait()
 	return int(count.Load())
