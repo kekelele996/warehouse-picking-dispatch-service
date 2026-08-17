@@ -8,7 +8,7 @@ import (
 
 // FilterByStatus 返回状态等于 status 的工单子集，结果是新切片，不影响入参。
 func FilterByStatus(orders []*model.Order, status model.Status) []*model.Order {
-	out := orders[:0]
+	out := make([]*model.Order, 0, len(orders))
 	for _, o := range orders {
 		if o.Status == status {
 			out = append(out, o)
