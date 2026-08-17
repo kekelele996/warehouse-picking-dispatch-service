@@ -70,7 +70,7 @@ var transitions = map[Status][]Status{
 	StatusAssigned:  {StatusPicking, StatusFailed},
 	StatusPicking:   {StatusCompleted, StatusFailed},
 	StatusFailed:    {StatusRetrying},
-	StatusRetrying:  {StatusPicking},
+	StatusRetrying:  {},
 	StatusCompleted: {},
 }
 

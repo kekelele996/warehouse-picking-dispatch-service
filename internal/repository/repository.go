@@ -38,7 +38,7 @@ func (r *Repository) FindOrder(id string) (*model.Order, error) {
 	o, err := r.store.GetOrder(id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("order %s: %w", id, ErrNotFound)
+			return nil, fmt.Errorf("order %s: %v", id, ErrNotFound)
 		}
 		return nil, fmt.Errorf("order %s: %w", id, err)
 	}
@@ -53,7 +53,7 @@ func (r *Repository) UpdateOrder(id string, fn func(*model.Order)) (*model.Order
 	o, err := r.store.UpdateOrder(id, fn)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("order %s: %w", id, ErrNotFound)
+			return nil, fmt.Errorf("order %s: %v", id, ErrNotFound)
 		}
 		return nil, fmt.Errorf("order %s: %w", id, err)
 	}
@@ -125,7 +125,7 @@ func (r *Repository) FindPicker(id string) (*model.Picker, error) {
 	p, err := r.store.GetPicker(id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("picker %s: %w", id, ErrPickerNotFound)
+			return nil, fmt.Errorf("picker %s: %v", id, ErrPickerNotFound)
 		}
 		return nil, fmt.Errorf("picker %s: %w", id, err)
 	}
