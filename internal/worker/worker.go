@@ -33,10 +33,6 @@ func New(repo *repository.Repository, exec Executor, pollInterval time.Duration)
 
 // Tick 执行一轮调度：先把失败且未超限的任务置为 retrying，再执行 retrying 任务。
 func (sch *Scheduler) Tick(ctx context.Context) (retried, executed int) {
-	if ctx.Err() != nil {
-		return 0, 0
-	}
-
 	tasks, err := sch.repo.ListTasks()
 	if err != nil {
 		return 0, 0
