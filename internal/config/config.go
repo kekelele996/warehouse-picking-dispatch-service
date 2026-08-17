@@ -41,7 +41,7 @@ func loadZoneRoutes() map[string]string {
 		}
 	}
 	if len(routes) == 0 {
-		return nil
+		return defaultZoneRoutes()
 	}
 	return routes
 }

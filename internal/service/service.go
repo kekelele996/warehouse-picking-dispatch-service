@@ -40,6 +40,9 @@ type SkillDispatcher struct {
 
 // NewSkillDispatcher 构造一个 SkillDispatcher；routes 为空时自动初始化。
 func NewSkillDispatcher(routes map[string]string) *SkillDispatcher {
+	if routes == nil {
+		routes = map[string]string{}
+	}
 	return &SkillDispatcher{routes: routes, fallback: "general"}
 }
 
@@ -141,7 +144,7 @@ func (s *Service) AssignPicker(orderID, pickerID string) (*model.PickTask, error
 	}
 	p, err := s.repo.FindPicker(pickerID)
 	if err != nil {
-		if err == repository.ErrPickerNotFound {
+		if errors.Is(err, repository.ErrPickerNotFound) {
 			return nil, fmt.Errorf("picker %s: %w", pickerID, ErrNoAvailablePicker)
 		}
 		return nil, err
