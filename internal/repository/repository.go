@@ -60,6 +60,12 @@ func (r *Repository) UpdateOrder(id string, fn func(*model.Order)) (*model.Order
 	return o, nil
 }
 
+// UpdateOrderIf 仅当订单状态等于 expect 时才更新，命中返回 (副本, true)。
+// 用于并发派单时的原子状态占用，避免两个 goroutine 同时对同一订单预留库存。
+func (r *Repository) UpdateOrderIf(id string, expect model.Status, fn func(*model.Order)) (*model.Order, bool) {
+	return r.store.UpdateOrderIf(id, expect, fn)
+}
+
 func (r *Repository) CreateTask(t *model.PickTask) (*model.PickTask, error) {
 	if err := r.store.PutTask(t); err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {
@@ -98,13 +104,27 @@ func (r *Repository) UpdateTask(id string, fn func(*model.PickTask)) (*model.Pic
 
 func (r *Repository) ReserveStock(sku string, qty int) error {
 	if !r.store.Reserve(sku, qty) {
-		return fmt.Errorf("sku %s: %v", sku, ErrInsufficientStock)
+		return fmt.Errorf("sku %s: %w", sku, ErrInsufficientStock)
+	}
+	return nil
+}
+
+// ReserveBatch 原子地预留多个 SKU 的库存；任一不足则整体失败并回滚已扣减部分。
+// 返回 nil 表示全部预留成功，否则返回被包装的 ErrInsufficientStock。
+func (r *Repository) ReserveBatch(items map[string]int) error {
+	if !r.store.ReserveBatch(items) {
+		return fmt.Errorf("reserve batch: %w", ErrInsufficientStock)
 	}
 	return nil
 }
 
 func (r *Repository) ReleaseStock(sku string, qty int) {
 	r.store.Release(sku, qty)
+}
+
+// ReleaseStockBatch 一次性归还多个 SKU 的库存，供 AssignPicker 失败回滚使用。
+func (r *Repository) ReleaseStockBatch(items map[string]int) {
+	r.store.ReleaseBatch(items)
 }
 
 func (r *Repository) StockSnapshot() map[string]int {

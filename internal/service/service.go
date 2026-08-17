@@ -19,6 +19,7 @@ var (
 	ErrValidation        = errors.New("invalid input")
 	ErrInvalidTransition = errors.New("invalid status transition")
 	ErrNoAvailablePicker = errors.New("no available picker")
+	ErrInsufficientStock = errors.New("insufficient stock")
 )
 
 var idCounter atomic.Int64
@@ -34,6 +35,7 @@ type Dispatcher interface {
 
 // SkillDispatcher 是 Dispatcher 的默认实现。
 type SkillDispatcher struct {
+	mu       sync.RWMutex
 	routes   map[string]string
 	fallback string
 }
@@ -48,6 +50,17 @@ func NewSkillDispatcher(routes map[string]string) *SkillDispatcher {
 
 func (d *SkillDispatcher) SkillFor(sku string) string {
 	cat := util.SKUCategory(sku)
+	d.mu.RLock()
+	if skill, ok := d.routes[cat]; ok {
+		d.mu.RUnlock()
+		return skill
+	}
+	d.mu.RUnlock()
+
+	// 未命中时回填 fallback，写操作单独加写锁，避免与并发读竞争触发 panic。
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// double-check：可能在升级锁期间已被其他 goroutine 写入。
 	if skill, ok := d.routes[cat]; ok {
 		return skill
 	}
@@ -156,12 +169,37 @@ func (s *Service) AssignPicker(orderID, pickerID string) (*model.PickTask, error
 	if !p.HasSkill(required) {
 		return nil, ErrNoAvailablePicker
 	}
-	for _, sku := range o.SKUs {
-		if err := s.repo.ReserveStock(sku, 1); err != nil {
-			return nil, err
-		}
-	}
+
+	// 原子地把订单从 pending 置为 assigned：用条件更新保证同一订单并发派单时只有一个成功，
+	// 失败者不会再去预留库存，避免库存被重复扣减（“扣两遍”）。
 	now := time.Now()
+	claimed, ok := s.repo.UpdateOrderIf(orderID, model.StatusPending, func(oo *model.Order) {
+		oo.Status = model.StatusAssigned
+		oo.PickerID = pickerID
+		oo.UpdatedAt = now
+	})
+	if !ok {
+		// 订单已被并发占用或状态已不可流转，按非法状态迁移报错。
+		return nil, fmt.Errorf("order %s from %s: %w", orderID, o.Status, ErrInvalidTransition)
+	}
+
+	// 批量原子预留所有 SKU；任一不足则整体回滚，并把订单状态回退到 pending。
+	items := make(map[string]int, len(claimed.SKUs))
+	for _, sku := range claimed.SKUs {
+		items[sku]++
+	}
+	if err := s.repo.ReserveBatch(items); err != nil {
+		s.repo.UpdateOrder(orderID, func(oo *model.Order) {
+			oo.Status = model.StatusPending
+			oo.PickerID = ""
+			oo.UpdatedAt = now
+		})
+		if errors.Is(err, repository.ErrInsufficientStock) {
+			return nil, fmt.Errorf("order %s: %w", orderID, ErrInsufficientStock)
+		}
+		return nil, err
+	}
+
 	t := &model.PickTask{
 		ID:          generateID("task"),
 		OrderID:     orderID,
@@ -173,13 +211,13 @@ func (s *Service) AssignPicker(orderID, pickerID string) (*model.PickTask, error
 		UpdatedAt:   now,
 	}
 	if _, err := s.repo.CreateTask(t); err != nil {
-		return nil, err
-	}
-	if _, err := s.repo.UpdateOrder(orderID, func(oo *model.Order) {
-		oo.Status = model.StatusAssigned
-		oo.PickerID = pickerID
-		oo.UpdatedAt = now
-	}); err != nil {
+		// 创建任务失败：回滚库存与订单状态。
+		s.repo.ReleaseStockBatch(items)
+		s.repo.UpdateOrder(orderID, func(oo *model.Order) {
+			oo.Status = model.StatusPending
+			oo.PickerID = ""
+			oo.UpdatedAt = now
+		})
 		return nil, err
 	}
 	return t, nil
@@ -200,14 +238,16 @@ func (s *Service) ExecuteTask(taskID string) (*model.PickTask, error) {
 	if !model.CanTransition(t.Status, model.StatusPicking) {
 		return nil, fmt.Errorf("task %s from %s: %w", taskID, t.Status, ErrInvalidTransition)
 	}
-	if _, err := s.repo.UpdateTask(taskID, func(tt *model.PickTask) {
+	// 进入 picking 并累加尝试次数；用更新后的副本继续判定，避免读到陈旧的 Attempts。
+	updated, err := s.repo.UpdateTask(taskID, func(tt *model.PickTask) {
 		tt.Status = model.StatusPicking
 		tt.Attempts++
 		tt.UpdatedAt = time.Now()
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
-	return s.completeTask(t)
+	return s.completeTask(updated)
 }
 
 func (s *Service) completeTask(t *model.PickTask) (*model.PickTask, error) {
@@ -215,7 +255,8 @@ func (s *Service) completeTask(t *model.PickTask) (*model.PickTask, error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := order.Priority == model.PriorityUrgent && t.Attempts == 0
+	// 紧急订单首次执行需人工复核：Attempts 在进入 picking 时已自增，首次即 ==1。
+	fail := order.Priority == model.PriorityUrgent && t.Attempts == 1
 	if fail {
 		if _, err := s.repo.UpdateTask(t.ID, func(tt *model.PickTask) {
 			tt.Status = model.StatusFailed
@@ -224,7 +265,7 @@ func (s *Service) completeTask(t *model.PickTask) (*model.PickTask, error) {
 		}); err != nil {
 			return nil, err
 		}
-		// 释放已预留库存
+		// 释放已预留库存。
 		for _, sku := range order.SKUs {
 			s.repo.ReleaseStock(sku, 1)
 		}

@@ -93,5 +93,9 @@ func (s *Server) writeOrderError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	if errors.Is(err, service.ErrInsufficientStock) {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	writeError(w, http.StatusInternalServerError, "internal error")
 }

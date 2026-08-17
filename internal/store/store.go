@@ -36,6 +36,35 @@ func New() *Store {
 	}
 }
 
+// cloneOrder 复制订单及其切片字段，避免内部对象指针外泄后被并发读写。
+func cloneOrder(o *model.Order) *model.Order {
+	if o == nil {
+		return nil
+	}
+	c := *o
+	c.SKUs = append([]string(nil), o.SKUs...)
+	return &c
+}
+
+// cloneTask 复制任务；PickTask 无切片/映射字段，浅拷贝即可。
+func cloneTask(t *model.PickTask) *model.PickTask {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
+}
+
+// clonePicker 复制拣货员及其技能切片。
+func clonePicker(p *model.Picker) *model.Picker {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	c.Skills = append([]string(nil), p.Skills...)
+	return &c
+}
+
 func (s *Store) PutOrder(o *model.Order) error {
 	if o == nil || o.ID == "" {
 		return errors.New("invalid order")
@@ -45,7 +74,7 @@ func (s *Store) PutOrder(o *model.Order) error {
 	if _, ok := s.orders[o.ID]; ok {
 		return ErrAlreadyExists
 	}
-	s.orders[o.ID] = o
+	s.orders[o.ID] = cloneOrder(o)
 	s.orderIDs = append(s.orderIDs, o.ID)
 	return nil
 }
@@ -57,7 +86,7 @@ func (s *Store) GetOrder(id string) (*model.Order, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return o, nil
+	return cloneOrder(o), nil
 }
 
 func (s *Store) ListOrders() []*model.Order {
@@ -65,7 +94,7 @@ func (s *Store) ListOrders() []*model.Order {
 	defer s.mu.RUnlock()
 	out := make([]*model.Order, 0, len(s.orderIDs))
 	for _, id := range s.orderIDs {
-		out = append(out, s.orders[id])
+		out = append(out, cloneOrder(s.orders[id]))
 	}
 	return out
 }
@@ -73,9 +102,12 @@ func (s *Store) ListOrders() []*model.Order {
 func (s *Store) OrderIDs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.orderIDs
+	out := make([]string, len(s.orderIDs))
+	copy(out, s.orderIDs)
+	return out
 }
 
+// UpdateOrder 在锁内对内部订单应用 fn，返回的是副本，调用方修改不影响存储。
 func (s *Store) UpdateOrder(id string, fn func(*model.Order)) (*model.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,7 +116,20 @@ func (s *Store) UpdateOrder(id string, fn func(*model.Order)) (*model.Order, err
 		return nil, ErrNotFound
 	}
 	fn(o)
-	return o, nil
+	return cloneOrder(o), nil
+}
+
+// UpdateOrderIf 仅当订单当前状态等于 expect 时才在锁内应用 fn，用于并发下的原子占用。
+// 命中返回 (副本, true)；订单缺失或状态不匹配返回 (nil, false)。
+func (s *Store) UpdateOrderIf(id string, expect model.Status, fn func(*model.Order)) (*model.Order, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	o, ok := s.orders[id]
+	if !ok || o.Status != expect {
+		return nil, false
+	}
+	fn(o)
+	return cloneOrder(o), true
 }
 
 func (s *Store) PutTask(t *model.PickTask) error {
@@ -96,7 +141,7 @@ func (s *Store) PutTask(t *model.PickTask) error {
 	if _, ok := s.tasks[t.ID]; ok {
 		return ErrAlreadyExists
 	}
-	s.tasks[t.ID] = t
+	s.tasks[t.ID] = cloneTask(t)
 	s.taskIDs = append(s.taskIDs, t.ID)
 	return nil
 }
@@ -108,7 +153,7 @@ func (s *Store) GetTask(id string) (*model.PickTask, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return t, nil
+	return cloneTask(t), nil
 }
 
 func (s *Store) ListTasks() []*model.PickTask {
@@ -116,7 +161,7 @@ func (s *Store) ListTasks() []*model.PickTask {
 	defer s.mu.RUnlock()
 	out := make([]*model.PickTask, 0, len(s.taskIDs))
 	for _, id := range s.taskIDs {
-		out = append(out, s.tasks[id])
+		out = append(out, cloneTask(s.tasks[id]))
 	}
 	return out
 }
@@ -124,9 +169,12 @@ func (s *Store) ListTasks() []*model.PickTask {
 func (s *Store) TaskIDs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.taskIDs
+	out := make([]string, len(s.taskIDs))
+	copy(out, s.taskIDs)
+	return out
 }
 
+// UpdateTask 在锁内对内部任务应用 fn，返回的是副本。
 func (s *Store) UpdateTask(id string, fn func(*model.PickTask)) (*model.PickTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +183,7 @@ func (s *Store) UpdateTask(id string, fn func(*model.PickTask)) (*model.PickTask
 		return nil, ErrNotFound
 	}
 	fn(t)
-	return t, nil
+	return cloneTask(t), nil
 }
 
 func (s *Store) SetStock(sku string, qty int) {
@@ -167,10 +215,43 @@ func (s *Store) Release(sku string, qty int) {
 	s.inventory[sku] += qty
 }
 
+// ReleaseBatch 一次性归还多个 SKU 的库存，用于失败回滚时与 ReserveBatch 对称释放。
+func (s *Store) ReleaseBatch(items map[string]int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sku, qty := range items {
+		s.inventory[sku] += qty
+	}
+}
+
+// ReserveBatch 在同一把锁内原子地预留多个 SKU 的库存。
+// 任一 SKU 库存不足即整体失败，已扣减的部分全部回滚，避免并发拣货时部分预留导致重复扣减。
+func (s *Store) ReserveBatch(items map[string]int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reserved := make([]struct{ sku string; qty int }, 0, len(items))
+	for sku, qty := range items {
+		if s.inventory[sku] < qty {
+			// 回滚已扣减的库存。
+			for _, r := range reserved {
+				s.inventory[r.sku] += r.qty
+			}
+			return false
+		}
+		s.inventory[sku] -= qty
+		reserved = append(reserved, struct{ sku string; qty int }{sku, qty})
+	}
+	return true
+}
+
 func (s *Store) StockSnapshot() map[string]int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.inventory
+	out := make(map[string]int, len(s.inventory))
+	for k, v := range s.inventory {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *Store) PutPicker(p *model.Picker) error {
@@ -182,7 +263,7 @@ func (s *Store) PutPicker(p *model.Picker) error {
 	if _, ok := s.pickers[p.ID]; ok {
 		return ErrAlreadyExists
 	}
-	s.pickers[p.ID] = p
+	s.pickers[p.ID] = clonePicker(p)
 	s.pickerIDs = append(s.pickerIDs, p.ID)
 	return nil
 }
@@ -194,7 +275,7 @@ func (s *Store) GetPicker(id string) (*model.Picker, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return p, nil
+	return clonePicker(p), nil
 }
 
 func (s *Store) ListPickers() []*model.Picker {
@@ -202,7 +283,7 @@ func (s *Store) ListPickers() []*model.Picker {
 	defer s.mu.RUnlock()
 	out := make([]*model.Picker, 0, len(s.pickerIDs))
 	for _, id := range s.pickerIDs {
-		out = append(out, s.pickers[id])
+		out = append(out, clonePicker(s.pickers[id]))
 	}
 	return out
 }
