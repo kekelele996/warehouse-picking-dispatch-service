@@ -7,8 +7,8 @@ RUN go mod download
 WORKDIR /app
 COPY . .
 WORKDIR /app
-RUN go build ./...
-CMD ["bash"]
+RUN go build -o /usr/local/bin/warehouse ./cmd/warehouse
+CMD ["/usr/local/bin/warehouse"]
 
 # 多架构交叉构建示例（请在仓库根目录执行）：
 # docker buildx build --platform linux/arm64,linux/amd64 -f benzhi.Dockerfile -t <image> .
