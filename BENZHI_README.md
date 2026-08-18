@@ -12,7 +12,7 @@
 
 ```bash
 go build ./...     # 编译
-go run ./cmd/app   # 启动（如项目可运行）
+go run ./cmd/warehouse   # 启动（如项目可运行）
 go test ./...      # 测试（如有）
 ```
 
